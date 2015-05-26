@@ -1,0 +1,220 @@
+<!doctype html>
+<html>
+<head>
+<script src="http://code.jquery.com/jquery-2.1.3.js"></script>
+
+	<meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1" />
+ 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<meta http-equiv="Content-Style-Type" content="text/css">
+	<title>fileReader</title>
+	<style type="text/css"><!--
+
+	--></style>
+
+</head>
+
+<body>
+
+<div class="container">
+
+<script type="text/javascript">
+
+/*
+var requestedBytes = 1024*1024*10000; // 10GB
+navigator.webkitPersistentStorage.requestQuota (
+    requestedBytes, function(grantedBytes) {  
+        console.log('granted ' + grantedBytes);
+    }, function(e) { console.log('Error', e); }
+);
+
+navigator.webkitPersistentStorage.queryUsageAndQuota ( 
+    function(usedBytes, grantedBytes) {  
+        console.log('we are using ', usedBytes, ' of ', grantedBytes, 'bytes');
+    }, 
+    function(e) { console.log('Error', e);  }
+);*/
+
+
+
+$('<input>')
+.attr('type', 'file')
+.attr('id', 'file')
+.prependTo('body');
+
+document.getElementById('file').addEventListener('change', function (evt)
+{
+	if (!evt.target.files){
+		return;
+	}
+
+	var file = evt.target.files[0],
+		reader = new FileReader(),
+		type = file.type.match(/(image|text|application|audio)\/.*/);
+	
+	if (type && type[1])
+		type = type[1] + "/*";
+	else
+		type = file.type;
+	console.log(type);
+	console.log(file);
+	switch(type) {
+	case "text/*":
+		reader.readAsText(file);
+		break;
+	case "image/*":
+	case "audio/*":
+		reader.readAsDataURL(file);
+		break;
+	case "application/*":
+		reader.readAsBinaryString(file);
+		break;
+	default:
+		reader.readAsText(file);
+	}
+	
+    reader.onload = function (evt) {
+		console.log(evt);
+		var file = $("input#file")[0].files[0];
+		src = evt.target.result;
+		var type = file.type.match(/(image)\/.*/);
+		if (type && type[1])
+		  type = type[1] + "/*";
+		else
+		  type = file.type;
+
+		switch(type) {
+		case 'text/javascript': 
+			$('<script>')
+				.attr('type', file.type)
+				.text(src)
+				.appendTo('head');
+			break;
+		case 'text/css': 
+			$('<style>')
+				.attr('type', file.type)
+				.text(src)
+				.appendTo('head');
+			break;
+		case 'image/*':
+			//$('<img>')
+			//	.attr('src', src)
+			//	.appendTo('body');
+			var img = $('<img>')
+				.attr('src', window.URL.createObjectURL(file))
+			img[0].onload = function() {console.log("revoke"); window.URL.revokeObjectURL(this.src); }
+			img.appendTo('body');				
+			break;
+		case "application/xhtml+xml": // .xhtml
+		case "text/html": // .html
+			$('body').append(src);
+			break;
+		case 'text/plain': 
+		case 'audio/mp3':
+		case "application/epub+zip":	// .epub
+		case 'application/rdf+xml':
+		case "audio/mpegurl":	// .m3u
+		case 'application/x-mpegurl':  // .m3u8
+		case "application/xml": // .config
+		case "text/xml":	// .xml
+		case "font/woff":  // .woff
+		case "application/x-shockwave-flash": // .swf
+		case "application/octet-stream":  // .exe
+		case "application/x-gzip":	// .gz
+		case "application/zip":  // .zip
+		case "text/x-tex":	// .tex
+		case "application/pdf": //.pdf
+		case "application/x-binary":	// .rar
+		case "application/msword": // .doc
+		default:
+				localStorage.setItem(objToString(file), src);
+		}
+				
+		function objToString (obj) {
+			var str = '';
+			for (var p in obj) {
+			   if (!(obj[p] instanceof Function))
+					str += p + ':' + (obj[p]||'""') + ',';
+			}
+			if (str.length)
+			   str = str.substr(0, str.length-2);
+			return "{"+str+"}";
+		}
+
+		if (file.type == "audio/mpeg")
+		{
+			var str = atob(src.substr(23,5000));  // grab a a bunch of chars
+			var sID = str.substr(0,3);
+			switch (sID) {
+			case "ID3":		// http://id3.org/id3v2.3.0
+				var Header = function (str) 
+				{
+					this.id = str.substr(0, 3);
+					this.version = str.charCodeAt(4).toString(10) + '.' + str.charCodeAt(5).toString(10);
+					var bitcode = str.charCodeAt(5).toString(2);
+					while (bitcode.length < 8) 
+						bitcode += '0';
+					this.flags = bitcode;
+					this.size = '';
+					for (i = 6; i< 10; i++)
+						this.size += str.charCodeAt(i).toString(16);
+					this.size = parseInt(this.size, 16);
+					this.bIsExtended = (this.flags[6] == '1');
+					this.headerLen = 10 + (this.bIsExtended ? 6 : 0); // +10 if extended flags CRC bit set 
+					// TODO: find example of extended header
+				};
+				var head = new Header(str);
+				str = str.substr(head.headerLen, str.length - head.headerLen);
+				var FrameSet = function(str)
+				{
+					var Frame = function(str) 
+					{
+						this.id = str.substr(0, 4);
+						this.size = '';
+						for (i = 4; i< 8; i++)
+							this.size += str.charCodeAt(i).toString(16);
+						this.size = parseInt(this.size, 16) + 10;	// also include size of this frame header
+						var bitcode = str.charCodeAt(8).toString(2);
+						while (bitcode.length < 8) 
+							bitcode += '0';
+						bitcode += str.charCodeAt(9).toString(2);
+						while (bitcode.length < 16) 
+							bitcode += '0';
+						this.flags = bitcode;
+						this.valueLead = str.substr(10, 1);  // 0=ISO-8859-1, 1=Unicode, private tags can ignore valueLead and us it as part of their value string
+						this.value = str.substr(11, this.size-11);
+					};
+					this.length = 0;
+					this.frameArray = [];
+					while (str[0] >= 'A' && str[0] <= 'Z') {
+						frame = new Frame(str);
+						var prev = this.frameArray[frame.id];
+						if (prev) {
+							if (prev instanceof Array)
+								this.frameArray[frame.id].push(frame);
+							else
+								this.frameArray[frame.id] = [prev, frame];
+						}
+						else
+							this.frameArray[frame.id] = frame;
+						this.length += frame.size;
+						str = str.substr(frame.size, str.length-frame.size);
+					}
+				};
+				var frameSet = new FrameSet(str);
+				str = str.substr(frameSet.length, str.length-frameSet.length);
+				break;
+			case "ID2":
+				break;
+			default:
+			}
+		}
+
+	};
+	
+});
+</script>
+</div>
+
+</body>
+
+</html>

@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title></title>
+	<meta http-equiv="Content-Type" content="text/html; charset=windows-1252">
+	<meta http-equiv="Content-Style-Type" content="text/css">
+	<script src="http://code.jquery.com/jquery.js"></script>
+	<!--script src="http://rawgit.com/abdmob/x2js/master/xml2json.js" type="text/javascript"></script-->
+	
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+	<style type="text/css"><!--
+	.feedEntryHeader:hover {
+		background-color: salmon;
+	}
+	.entryDate {
+		color: green;
+	}
+	--></style>
+
+</head>
+
+<body>
+
+
+<input type="text" id="feedURL" placeholder="Enter feed URL" size="60" tabindex="1">
+<button id="go" onclick="run()">GO</button>
+<input type="text" id="num" placeholder="num" size="10" tabindex="2">
+<input type="checkbox" id="historical" value="h" tabindex="3"><label>historical</label>
+<input type="checkbox" id="viewResponse" tabindex="4"><label>view Response</label>
+<div id="opmlDiv"></div>
+<div id="feedDiv"></div>
+
+<script>
+
+function run()
+{
+	loadXML($("#feedURL")[0].value);
+}
+
+
+function loadXML(url, bNotFeed, bTryOPML)
+{
+	var yql, q = '';
+	if (bNotFeed)	{
+		if (bTryOPML) {
+			yql = 'http://query.yahooapis.com/v1/public/yql?callback=gotOPML&format=xml&q=';
+			q = encodeURIComponent(`select * from xml where url="${url}"`);
+		}
+		else
+		{
+			yql = 'http://query.yahooapis.com/v1/public/yql?callback=gotHTML&format=xml&q=';
+			q = encodeURIComponent(`select * from html where url="${url}" and xpath="*"`);
+		}
+  	}
+  	else
+  	{
+  		if (false) { // use local proxy, no need for JSONP
+   			yql = `http://localhost:8080//xxx/xdom.php?val=${url}`;
+  			$.get( yql, function( data ) {
+  				if (data.children[0].tagName == "opml")
+					gotOPML(data.children[0]);
+  				else if (data.children[0].tagName == "rss")
+					gotXML({responseData:data.children[0]});
+			});
+			return;
+		}
+ 		//yql = `http://anyorigin.com/get/?url=${url}&callback=gotXML`;
+   		yql = `http://ajax.googleapis.com/ajax/services/feed/load?v=1.0&callback=gotXML${$("#historical")[0].checked?"&scoring=h":""}&q=${url}&num=${$("#num")[0].value}&output=json_xml`;
+  	}
+	return loadScript(yql + q, function (evt) {
+		//console.log('script load event:');
+		//console.log(evt);
+  	});
+}
+
+
+function loadScript(url, callback)
+{
+  var s = document.createElement('script');
+  s.src = url;
+  if (s.addEventListener) {
+    s.addEventListener('load', callback, false);
+  } else {
+    s.onreadystatechange = function () {
+      if (this.readyState == 'complete') {
+        callback();
+        s = null;
+      }
+    }
+  }
+  s.type = 'text/javascript';
+  document.getElementsByTagName('head')[0].appendChild(s);
+};
+
+
+// JSONP callback
+function gotXML(response)
+{
+	if (response.responseData) {
+		if ($("#viewResponse")[0].checked)
+			$(`<a target="_blank" href="data:text/plain;charset=US-ASCII,`+encodeURIComponent(response.responseData)+`"/>`)[0].click()
+		processFeed(response.responseData);
+		$("#feedDiv")[0].scrollIntoView();
+	}
+	else {
+		// assume user entered the webpage, not it's feed
+		loadXML($("#feedURL")[0].value, true);
+	}
+}
+
+
+// JSONP callback
+function gotHTML(response)
+{
+	//console.log(response);
+	if (response.results[0])
+	{
+		var data = response.results[0];
+		if ($("#viewResponse")[0].checked)
+			$(`<a target="_blank" href="data:text/plain;charset=US-ASCII,`+encodeURIComponent(JSON.stringify(data))+`"/>`)[0].click()
+
+		var div = $("<div>").html(data);
+		var tmp = "";
+		$.each(div[0].querySelectorAll("link[rel='alternate']"), function(i, el) {
+			tmp += `${el.type}: <a href="javascript:$('#feedURL')[0].value='${el.href}';setTimeout(function(){$('#go').click()}, 1000);void 0">${el.title||el.href}</a><br>`;
+		});
+		if (tmp)
+			tmp = "<b>Feed(s) found:</b> Click one to continue.<br/>" + tmp;
+		else
+			tmp = "<b>Feed not found</b>";	
+		document.querySelector('#feedDiv').innerHTML = tmp;
+	}
+	else {
+		// try OPML
+		loadXML($("#feedURL")[0].value, true, true);
+	}
+}
+
+// JSONP callback
+function gotOPML(response)
+{
+	var div = $("<div>").html((new window.DOMParser()).parseFromString(response.results[0], "text/xml").documentElement.outerHTML);
+	var opml = div[0].firstChild;
+	console.assert(opml.nodeName == "OPML", "gotOPML/response.nodeName!=opml", opml.nodeName );
+	console.assert(opml.children[0].nodeName == "TITLE", "gotOPML/response.children[0].nodeName!=title", opml.children[0].nodeName);
+	console.assert(opml.children[1].nodeName == "OUTLINE", "gotOPML/response.children[1].nodeName!=outline", opml.children[1].nodeName);
+	
+	var outlines = opml.querySelectorAll("outline");
+	var tmp = "";
+	$(outlines).each(function(idx,node) {
+		var a = node.attributes;
+		if (!a.getNamedItem("type")) {	// directory
+			
+		}
+		else {
+			console.assert(a.getNamedItem("type").nodeValue == "rss", "gotOPML/type != rss", a.getNamedItem("type").nodeValue);
+			tmp += `<a href='${a.getNamedItem("htmlUrl").nodeValue}' target="_blank">${a.getNamedItem("text").nodeValue||a.getNamedItem("title").nodeValue}</a>&nbsp;<button onclick='loadXML(\"${a.getNamedItem("xmlUrl").nodeValue}\")'>Load Feed</button><br/>`;
+		}
+	})
+	document.querySelector('#opmlDiv').innerHTML = tmp;
+}
+
+function processFeed(obj)
+{
+	var d = document.createElement("DIV");
+
+	if (obj.feed)	// atom
+	{
+		var z = new viewAtom(obj.feed);
+		var y = new viewAtomEntries(obj.feed);
+		d.innerHTML += z.render();
+		d.innerHTML += y.render();
+	}
+	else {
+		try {
+			d.innerHTML = "<b>Unknown format: " + obj + "</b>";
+		}
+		catch (e) {console.log(e)}
+	}
+	document.querySelector('#feedDiv').innerHTML = d.innerHTML;
+}
+
+
+
+var viewAtom = function(feed)
+{
+  this.feed = feed;
+  this.template = function(node) { 
+		var tmp = "";
+		if (node.link) {
+			if (node.link instanceof Array) {
+				link.forEach(function(aNode) {
+					if (aNode.type == "alternate") {
+						tmp = `<h1 class="feedHeader"><a href="${aNode.href}" target="_blank">${node.title}</a></h1>`;
+					}
+				});
+			}
+			else
+				tmp = `<h1 class="feedHeader"><a href="${node.link}" target="_blank">${node.title}</a></h1>`;
+		}
+		else
+			tmp = `<h1 class="feedHeader">${node.title}</h1>`;
+		return tmp + (node.description ? `<p class="feedDescription"><span class="descriptionText">${node.description}</span>` : "") + (node.author && node.author != "" ? `<span class="feedAuthor"> By ${node.author}</span></p><br\>` : ""); 
+  };
+  this.render = function() {
+	    return this.template(this.feed);
+  }
+}
+
+var toggleItem = function(el)
+{
+	var style = el.nextSibling.style.getPropertyValue("display");
+	el.nextSibling.style.setProperty("display", (style == "none" ? "" : "none"));
+}
+
+var viewAtomEntries = function(feed)
+{
+	this.feed = feed;
+	this.template = function(node) {
+		var tmp = '<div class="feedEntryHeader" onclick="toggleItem(this)">';
+		tmp += `${node.title} ` + `<span class="entryDate">` + new Date(`${node.publishedDate}`).toLocaleString()  + `</span></div><div class="feedEntryBody" style="display:none">`;
+
+		if (node.link instanceof Array) {
+			node.link.forEach(function(aNode) {
+				if (aNode.type == "alternate") {
+					tmp += `<b><a href="${aNode._href}" target="_blank">${node.title}</a></b>`;
+				}
+			});
+		}
+		else
+			tmp += `<b><a href="${node.link}" target="_blank">${node.title}</a></b>`;
+		tmp += `<br>By ${node.author}`;
+		tmp += `${node.content||node.contentSnippet}`;
+		tmp += node.categories.length ? "Categories: " + node.categories.join(",") : "";
+		if (node.mediaGroups)
+		{
+			tmp += '<div class="mediaGroups">';
+			node.mediaGroups.forEach(function (mg) {
+			  tmp += '<p class="mediaTitle">Media</p>';
+			  mg.contents.forEach(function (cont) {
+				switch (cont.medium) {
+				  case "image":
+					tmp += `<div class="mediaItem"><a href="${cont.url}" target="_blank">${cont.title}<br/><img src="${cont.url}"/></a></div>`;
+					break;
+				  default:
+					tmp += `<div class="mediaItem">medium=${cont.medium}, url=${cont.url}, title=${cont.title}</div>`;
+				  }
+			  })
+			})
+			tmp += '</div>'
+		}
+		return tmp + `</div>`;
+	};
+	this.render = function()
+	{
+		var tmp = "";
+		this.feed.entries.forEach(function(node) {
+			tmp += '<div class="feedEntry">' + this.template(node) + '</div>';
+		}.bind(this));
+		return tmp;
+	};
+}
+
+
+txtAuthor = function(author)
+{
+	var txt = "";
+	if (author)
+	{
+		if (author.uri)
+		{
+			txt = `<a href="${author.uri}" target="_blank">${author.name}</a>  `;	
+		}
+		else if (author.name)
+		{
+			txt = `${author.name}  `;
+		}
+		if (author.image)
+		{
+			var src = author.image._src;
+			if (src.substring(0,2) == "//")
+				src = "http:" + src;
+			txt += `<img src="${src}" style="height: ${author.image._height}; width: ${author.image._width}"/>`;
+		}
+	}
+	return txt;
+}
+
+txtCategories = function(cats, isAtom)
+{
+	var txt = "";
+	if (cats)
+	{
+		txt += `category: `;
+		var tmp = cats;
+		if (!	Array.isArray(tmp))
+			tmp = [tmp];
+		txt += (isAtom ? `${tmp[0]._term}` : (tmp[0]._text ? `${tmp[0]._text}` : `${tmp[0]}`));
+		tmp.shift();
+		tmp.forEach(function(cat) {
+			txt += `, ${(isAtom ? cat._term : cat)}`;
+		});
+	}
+	return txt;
+}
+
+
+/*
+
+function run()
+{
+	getXML($("#feedURL")[0].value,
+	  function(res)
+	  {
+	  	if (res.responseText == "")
+	  	{
+	  		// could it be the user didn't give a feed, but a webpage?
+	  		// load webpage and look for feed links
+			getXML($("#feedURL")[0].value,
+			  function(res)
+			  {
+				if (res.responseText != "")
+				{
+					var x2js = new X2JS();
+					var jas = x2js.xml_str2json(res.responseText);
+					//console.log(JSON.stringify(jas));
+					if (jas.html && jas.html.head && jas.html.head.link)
+					{
+						var frag = '';
+						for (i in jas.html.head.link)
+						{
+							if (jas.html.head.link[i]._rel == "alternate")
+							{
+								var href = jas.html.head.link[i]._href;
+								var title = jas.html.head.link[i]._title;
+								var type = jas.html.head.link[i]._type;
+								if (jas.html.head.link[i]._href[0] == '/')
+								{
+									var r = $("#feedURL")[0].value.match(/^(https?:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w \.-]*)*\/?$/);
+									href = r[1]+r[2]+'.'+r[3] + href;
+								}
+								frag += `${type}: <a href="javascript:$('#feedURL')[0].value='${href}';setTimeout(function(){$('#go').click()}, 1000);void 0">${title}</a><br>`;
+							}
+						}
+						if (frag == '')
+							frag = "<b>Feed not found</b>";	
+						else
+							frag = "<b>Feed(s) found:</b> Click one to continue.<br/>" + frag;
+						document.querySelector('#feedDiv').innerHTML = frag;
+					}
+					else
+						document.querySelector('#feedDiv').innerHTML = "<b>Feed not found</b>";	
+					delete x2js;
+				}
+			  }, true)
+	  	}
+	  	else
+			processFeed(res.responseText);
+	  })
+	//.success(function(response, statusText, xhrObj) {
+	//  console.log(response, statusText, xhrObj);
+	//  if (response.results.length == 1)
+	//  {
+	//	console.log(response.results[0]);
+	//  }
+	//})
+	//.error(function(xhrObj, textStatus, err) {
+	//  console.log(xhrObj, textStatus, err);
+	//});
+	
+}
+*/
+
+</script>
+
+
+</body></html>
